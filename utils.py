@@ -7,6 +7,7 @@ import tqdm
 import json
 import torch
 import shutil
+import string
 import logging
 import requests
 import jsonlines
@@ -97,6 +98,12 @@ def IP():
 def DATE():
     return time.strftime("%Y-%m-%d",time.localtime(time.time()))
 
+def DATETIME():
+    return time.strftime("%Y-%m-%d[%H.%M.%S]",time.localtime(time.time()))
+
+def RANDSTRING(length, charset=string.ascii_uppercase + string.digits):
+    return ''.join(random.choice(charset) for _ in range(length))
+
 def TQDM(something, s=0, desc=None):
     if type(something) is int:
         return tqdm.trange(s,something+s,desc=desc,dynamic_ncols=True)
@@ -130,13 +137,20 @@ def WARN(something):
 def HIGHLIGHT(something):
     return "\033[1;34m"+str(something)+"\033[0m"
 
+def COLOR1(something):
+    return "\033[1;35m"+str(something)+"\033[0m"
+
+def COLOR2(something):
+    return "\033[1;36m"+str(something)+"\033[0m"
+
 logging.getLogger('PIL').setLevel(logging.WARNING)
 logging.getLogger('matplotlib.font_manager').disabled = True
-def Logger(PATH, level='debug', console=False, mode='a'):
-    _level = logging.DEBUG if level=='debug' else logging.INFO
-    logger = logging.getLogger(); logger.setLevel(_level)
+LEVEL = {'debug':logging.DEBUG,'info':logging.INFO,'warning':logging.WARNING}
+def Logger(PATH, level='debug', cslevel='warning', console=False, mode='a'):
+    _level = LEVEL[level]; _cslevel = LEVEL[cslevel]
+    logger = logging.getLogger("file_log"); logger.setLevel(_level)
     if console:
-        cs = logging.StreamHandler(); cs.setLevel(_level); logger.addHandler(cs)
+        cs = logging.StreamHandler(); cs.setLevel(_cslevel); logger.addHandler(cs)
     if PATH is not None and PATH != '':
         Create(Folder(PATH)); fh = logging.FileHandler(PATH, mode=mode); fh.setLevel(_level); logger.addHandler(fh)
     return logger
@@ -180,9 +194,8 @@ class Tracker():
             return None
         return b
     def variable_profile(self, variable):
-        values = self.curve[variable]
-        key = self.compare_func(self.key[variable])
-        return values[np.argmax([key(x[1]) for x in values])][1]
+        values = self.curve[variable]; key = self.compare_func(self.key[variable])
+        return values[np.argmax([key(x[1]) for x in values])][1] if len(values) else None
     def profile(self):
         profile = {}
         for variable in self.curve.keys():
@@ -203,8 +216,11 @@ class Tracker():
                 values = sorted(values); X,Y = [v[0] for v in values], [v[1] for v in values]
                 with Painter("%s: %s"%(self.title,variable), os.path.join(self.DIR,"%s.png"%variable)) as (fig,axe):
                     plt.plot(X, Y); plt.xlabel(self.xlabel[variable]); plt.ylabel(variable)
+    def serialize(self):
+        SaveJSON(self.curve,os.path.join(self.DIR,"metrics.log"),indent=4)
+        SaveJSON(self.profile(),os.path.join(self.DIR,"profile.log"),indent=4)
     def save(self):
-        torch.save(self.__dict__, self.data_file); self.plot()
+        torch.save(self.__dict__, self.data_file); self.plot(); self.serialize()
     def __enter__(self):
         return self
     def __exit__(self, exc_type, exc_val, exc_tb):

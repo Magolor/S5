@@ -7,7 +7,7 @@ from torchvision.transforms import functional as TF
 
 # Modified From https://github.com/pytorch/vision/blob/master/references/segmentation/transforms.py
 def pad_if_smaller(img, size, fill=0):
-    img_size = (img.shape[-2],img.shape[-1])
+    img_size = (img.size[-2],img.size[-1])
     min_size = min(img_size)
     if min_size < size:
         ow, oh = img_size
@@ -35,11 +35,12 @@ class RandomGaussianBlur(object):
         return image, target
 
 class ColorJitter(object):
-    def __init__(self, brightness=0, contrast=0, saturation=0, hue=0):
-        self.colorjitter = T.ColorJitter(brightness, contrast, saturation, hue)
+    def __init__(self, brightness=0, contrast=0, saturation=0, hue=0, p=1.0):
+        self.colorjitter = T.ColorJitter(brightness, contrast, saturation, hue); self.p = p
 
     def __call__(self, image, target):
-        image = self.colorjitter(image)
+        if random.random() < self.p:
+            image = self.colorjitter(image)
         return image, target
 
 class ResizeImage(object):
@@ -57,7 +58,7 @@ class RandomResizeImage(object):
     def __call__(self, image, target):
         p = random.random()*self.interval+self.min_scale; s = (int(self.size[0]*p),int(self.size[1]*p))
         image = TF.resize(image, s, interpolation=T.InterpolationMode.NEAREST)
-        target = TF.resize(target.unsqueeze(0), s, interpolation=T.InterpolationMode.NEAREST)[0]
+        target = TF.resize(target, s, interpolation=T.InterpolationMode.NEAREST)
         return image, target
 
 class RandomHorizontalFlip(object):
@@ -117,21 +118,79 @@ class CityscapesTargetTransform(object):
             new_tgt[target==k] = v
         return image, new_tgt
 
+def get_image_with_suggestion(image, bi_tgt, blur_threshold, window_number = 10):
+    blurred_tgt = bi_tgt.clone()
+    w, h = blurred_tgt.size()
+    I = w//window_number
+    J = h//window_number
+    x = np.random.randint(1, blur_threshold)
+    y = np.random.randint(1, blur_threshold)
+    for i in range(1, window_number-1):
+        for j in range(1, window_number-1):
+            for m in range(-1, 2):
+                for n in range(-1, 2):
+                    blurred_tgt[i*I: (i+1)*I-1, j*J: (j+1)*J-1] = torch.logical_or(blurred_tgt[i*I: (i+1)*I-1, j*J: (j+1)*J-1], blurred_tgt[i*I + m*x: (i+1)*I-1 + m*x, j*J + n*y: (j+1)*J-1 + n*y])
+    blurred_tgt = blurred_tgt.unsqueeze(0)
+    image_with_suggestion = torch.cat([image, blurred_tgt], dim = 0)
+    return image_with_suggestion
+
+def get_bi_tgt(new_tgt, label_list, threshold):
+    # return the matrix where "true" replaces all the positions of a random object (object i, 0 <= i <= 19) large enough in the matrix new_tgt
+    count = [0 for i in range(max(label_list)+1)]
+    large_object_labels = []
+    for i in label_list:
+        count[i] = (new_tgt == i).sum()
+        if count[i] > threshold:
+            large_object_labels.append(i)
+    # n = count.index(max(count))
+    n = random.choice(large_object_labels)
+    bi_tgt = (new_tgt == n)
+    return bi_tgt.long()
+
+class SuggestionTransform(object):
+    def __init__(self, label_list = list(range(1, 20)), threshold = 100, blur_threshold = 20, window_number = 10):
+        self.label_list = label_list
+        self.threshold = threshold
+        self.blur_threshold = blur_threshold
+        self.window_number = window_number
+    def __call__(self, image, target):
+        new_tgt = target.clone()
+        bi_tgt = get_bi_tgt(new_tgt, [i+1 for i in range(19)], self.threshold)
+        image_with_suggestion = get_image_with_suggestion(image, bi_tgt, self.blur_threshold, self.window_number)
+        return image_with_suggestion, bi_tgt
+
 CITYSCAPES_IMAGE_SIZE = (1024,2048)
 CITYSCAPES_REDUCED_IMAGE_SIZE = (512,1024)
 DEFAULT_TRANSFORM = Compose([
+    # ResizeImage(CITYSCAPES_REDUCED_IMAGE_SIZE),
     ToTensor(),
-    CityscapesTargetTransform(),
     Normalize((.485, .456, .406), (.229, .224, .225)),
-    ResizeImage(CITYSCAPES_REDUCED_IMAGE_SIZE)
+    CityscapesTargetTransform(),
 ])
 AUGMENT_TRANSFORM = Compose([
-    ToTensor(),
-    CityscapesTargetTransform(),
-    Normalize((.485, .456, .406), (.229, .224, .225)),
-    # RandomResizeImage(size=CITYSCAPES_IMAGE_SIZE,min_scale=0.75,max_scale=1.25),
+    ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1),
+    RandomResizeImage(CITYSCAPES_IMAGE_SIZE, min_scale=0.75, max_scale=1.5),
+    RandomGaussianBlur((7,7),(0.1,2.0),p=0.5),
     RandomCrop(768),
-    RandomGaussianBlur((5,5),(0.1,2.0),p=0.5),
-    ColorJitter(brightness=0.5, contrast=0.5, hue=0.5),
     RandomHorizontalFlip(0.5),
+    ToTensor(),
+    Normalize((.485, .456, .406), (.229, .224, .225)),
+    CityscapesTargetTransform(),
+    # RandomResizeImage(size=CITYSCAPES_IMAGE_SIZE,min_scale=0.75,max_scale=1.25),
+    # ResizeImage(CITYSCAPES_REDUCED_IMAGE_SIZE),
 ])
+SUGGEST_TRANSFORM = Compose([
+    ToTensor(),
+    Normalize((.485, .456, .406), (.229, .224, .225)),
+    CityscapesTargetTransform(),
+    SuggestionTransform(),
+    ResizeImage(CITYSCAPES_REDUCED_IMAGE_SIZE),
+])
+def CREATE_SUGGEST_TRANSFORM(threshold = 100, blur_threshold = 20, window_number = 10):
+    return Compose([
+        ToTensor(),
+        Normalize((.485, .456, .406), (.229, .224, .225)),
+        CityscapesTargetTransform(),
+        SuggestionTransform(threshold=threshold,blur_threshold=blur_threshold,window_number=window_number),
+        ResizeImage(CITYSCAPES_REDUCED_IMAGE_SIZE),
+    ])
