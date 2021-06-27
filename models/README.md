@@ -1,0 +1,1 @@
+The trained models will be stored under this folder (sub-folders will be generated automatically), along with training and validation stats.

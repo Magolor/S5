@@ -98,7 +98,7 @@ class ModelWrapper(nn.Module):
             pbar.close()
             for key in train_stats.keys():
                 train_stats[key] /= c
-        if self.console_log:
+        if self.console_log and self.logger is not None:
             self.logger.info("[%s] Epoch #%04d Train Loss = %7.4f"%(self.model_name,self.epoch,loss/c))
         if self.scheduler is not None:
             self.scheduler.step()
@@ -132,7 +132,7 @@ class ModelWrapper(nn.Module):
             pbar.close()
             for key in valid_stats.keys():
                 valid_stats[key] /= c
-        if self.console_log:
+        if self.console_log and self.logger is not None:
             self.logger.info("[%s] Epoch #%04d Valid Loss = %7.4f"%(self.model_name,self.epoch,loss/c))
         if return_outputs:
             outputs = torch.cat(outputs,dim=0)

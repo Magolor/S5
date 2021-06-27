@@ -42,9 +42,9 @@ def CityscapesLoaders(
     if debug:
         SAMPLE_LENGTH = 64
         indices = {
-            'train': [i for i in range(SAMPLE_LENGTH)],
-            'valid': [i for i in range(SAMPLE_LENGTH)],
-            'testi': [i for i in range(SAMPLE_LENGTH)],
+            'train': np.random.choice(len(datasets['train']),SAMPLE_LENGTH),
+            'valid': np.random.choice(len(datasets['valid']),SAMPLE_LENGTH),
+            'testi': np.random.choice(len(datasets['testi']),SAMPLE_LENGTH),
         }
         datasets = {
             'train': Subset(datasets['train'], indices['train']),

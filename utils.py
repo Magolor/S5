@@ -116,6 +116,10 @@ def CMD(command, wait=True):
 def LineToFloats(line):
     return [float(s) for s in re.findall(r"(?<!\w)[-+]?\d*\.?\d+(?!\d)",line)]
 
+def UnzipList(L):
+    F = lambda x:[e for i in x for e in F(i)] if type(x) is list else [x]
+    return F[L]
+
 def PrintConsole(*args, **kwargs):
     print(*args, file=sys.stdout, **kwargs)
 

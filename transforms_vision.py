@@ -118,21 +118,61 @@ class CityscapesTargetTransform(object):
             new_tgt[target==k] = v
         return image, new_tgt
 
-def get_image_with_suggestion(image, bi_tgt, blur_threshold, window_number = 10):
+def get_image_with_suggestion(image, bi_tgt, blur_threshold, window_number = 32):
     blurred_tgt = bi_tgt.clone()
     w, h = blurred_tgt.size()
     I = w//window_number
     J = h//window_number
-    x = np.random.randint(1, blur_threshold)
-    y = np.random.randint(1, blur_threshold)
-    for i in range(1, window_number-1):
-        for j in range(1, window_number-1):
-            for m in range(-1, 2):
-                for n in range(-1, 2):
-                    blurred_tgt[i*I: (i+1)*I-1, j*J: (j+1)*J-1] = torch.logical_or(blurred_tgt[i*I: (i+1)*I-1, j*J: (j+1)*J-1], blurred_tgt[i*I + m*x: (i+1)*I-1 + m*x, j*J + n*y: (j+1)*J-1 + n*y])
+    for i in range(window_number):
+        for j in range(window_number):
+            x = max(min(min(np.random.randint(1, blur_threshold), w-(i+1)*I-1), i*I), 0)
+            y = max(min(min(np.random.randint(1, blur_threshold), h-(j+1)*J-1), j*J), 0)
+            for _ in range(1000):
+                m = np.random.randint(-x,x+1)
+                n = np.random.randint(-y,y+1)
+                blurred_tgt[i*I: (i+1)*I-1, j*J: (j+1)*J-1] = torch.logical_or(blurred_tgt[i*I: (i+1)*I-1, j*J: (j+1)*J-1], blurred_tgt[i*I + m: (i+1)*I-1 + m, j*J + n: (j+1)*J-1 + n])
+                    
     blurred_tgt = blurred_tgt.unsqueeze(0)
     image_with_suggestion = torch.cat([image, blurred_tgt], dim = 0)
     return image_with_suggestion
+
+def get_image_with_click_suggestion(image, bi_tgt):
+    clicked_tgt = bi_tgt.clone()
+    pos = np.where(bi_tgt==1)
+    n = np.random.randint(pos[0].size)
+    i = pos[0][n]
+    j = pos[1][n]
+    clicked_tgt[:,:] = False
+    clicked_tgt[i][j] = True
+    clicked_tgt = clicked_tgt.unsqueeze(0)
+
+    image_with_click_suggestion = torch.cat([image, clicked_tgt], dim = 0)
+    return image_with_click_suggestion
+
+def get_image_with_box_suggestion(image, bi_tgt, b=0):
+    box_tgt = bi_tgt.clone()
+    pos = np.where(bi_tgt==1)
+    u, d, l, r = pos[0].min(), pos[0].max(), pos[1].min(), pos[1].max()
+    box_tgt[max(u-b,0):min(d+1+b,bi_tgt.shape[0]),max(l-b,0):min(r+1+b,bi_tgt.shape[1])] = True
+    box_tgt = box_tgt.unsqueeze(0)
+    image_with_box_suggestion = torch.cat([image, box_tgt], dim = 0)
+    return image_with_box_suggestion
+
+def get_image_with_block_suggestion(image, bi_tgt, window_number=32, thres=0.2):
+    block_tgt = bi_tgt.clone()
+    w, h = block_tgt.size()
+    I = w//window_number
+    J = h//window_number
+    for i in range(window_number):
+        for j in range(window_number):
+            flood = bi_tgt[i*I: (i+1)*I-1, j*J: (j+1)*J-1].sum()/(I*J) >= thres
+            if flood:
+                block_tgt[i*I: (i+1)*I-1, j*J: (j+1)*J-1] = True
+                    
+    block_tgt = block_tgt.unsqueeze(0)
+    image_with_suggestion = torch.cat([image, block_tgt], dim = 0)
+    return image_with_suggestion
+
 
 def get_bi_tgt(new_tgt, label_list, threshold):
     # return the matrix where "true" replaces all the positions of a random object (object i, 0 <= i <= 19) large enough in the matrix new_tgt
@@ -148,7 +188,7 @@ def get_bi_tgt(new_tgt, label_list, threshold):
     return bi_tgt.long()
 
 class SuggestionTransform(object):
-    def __init__(self, label_list = list(range(1, 20)), threshold = 100, blur_threshold = 20, window_number = 10):
+    def __init__(self, label_list = list(range(1, 20)), threshold = 100, blur_threshold = 20, window_number = 16):
         self.label_list = label_list
         self.threshold = threshold
         self.blur_threshold = blur_threshold
@@ -158,6 +198,38 @@ class SuggestionTransform(object):
         bi_tgt = get_bi_tgt(new_tgt, [i+1 for i in range(19)], self.threshold)
         image_with_suggestion = get_image_with_suggestion(image, bi_tgt, self.blur_threshold, self.window_number)
         return image_with_suggestion, bi_tgt
+
+# wh add:
+class ClickSuggestionTransform(object):
+    def __init__(self, label_list = list(range(1, 20)), threshold = 100):
+        self.label_list = label_list
+        self.threshold = threshold
+    def __call__(self, image, target):
+        new_tgt = target.clone()
+        bi_tgt = get_bi_tgt(new_tgt, [i+1 for i in range(19)], self.threshold)
+        image_with_click_suggestion = get_image_with_click_suggestion(image, bi_tgt)
+        return image_with_click_suggestion, bi_tgt
+
+class BoxSuggestionTransform(object):
+    def __init__(self, label_list = list(range(1, 20)), threshold = 100):
+        self.label_list = label_list
+        self.threshold = threshold
+    def __call__(self, image, target):
+        new_tgt = target.clone()
+        bi_tgt = get_bi_tgt(new_tgt, [i+1 for i in range(19)], self.threshold)
+        image_with_box_suggestion = get_image_with_box_suggestion(image, bi_tgt)
+        return image_with_box_suggestion, bi_tgt
+
+class BlockSuggestionTransform(object):
+    def __init__(self, label_list = list(range(1, 20)), threshold = 100):
+        self.label_list = label_list
+        self.threshold = threshold
+    def __call__(self, image, target):
+        new_tgt = target.clone()
+        bi_tgt = get_bi_tgt(new_tgt, [i+1 for i in range(19)], self.threshold)
+        image_with_block_suggestion = get_image_with_block_suggestion(image, bi_tgt)
+        return image_with_block_suggestion, bi_tgt
+
 
 CITYSCAPES_IMAGE_SIZE = (1024,2048)
 CITYSCAPES_REDUCED_IMAGE_SIZE = (512,1024)
@@ -186,11 +258,24 @@ SUGGEST_TRANSFORM = Compose([
     SuggestionTransform(),
     ResizeImage(CITYSCAPES_REDUCED_IMAGE_SIZE),
 ])
-def CREATE_SUGGEST_TRANSFORM(threshold = 100, blur_threshold = 20, window_number = 10):
-    return Compose([
-        ToTensor(),
-        Normalize((.485, .456, .406), (.229, .224, .225)),
-        CityscapesTargetTransform(),
-        SuggestionTransform(threshold=threshold,blur_threshold=blur_threshold,window_number=window_number),
-        ResizeImage(CITYSCAPES_REDUCED_IMAGE_SIZE),
-    ])
+def CREATE_SUGGEST_TRANSFORM(suggestion = True, threshold = 100, window_number = 10):
+    return (
+        Compose([
+            ToTensor(),
+            Normalize((.485, .456, .406), (.229, .224, .225)),
+            CityscapesTargetTransform(),
+            SuggestionTransform(threshold=threshold,blur_threshold=int(suggestion),window_number=window_number),
+            ResizeImage(CITYSCAPES_REDUCED_IMAGE_SIZE),
+        ]) if suggestion not in ['box','click','block'] else
+        Compose([
+            ToTensor(),
+            Normalize((.485, .456, .406), (.229, .224, .225)),
+            CityscapesTargetTransform(),
+            {
+                'box': BoxSuggestionTransform(),
+                'click': ClickSuggestionTransform(),
+                'block': BlockSuggestionTransform(),
+            }[suggestion],
+            ResizeImage(CITYSCAPES_REDUCED_IMAGE_SIZE),
+        ])
+    )

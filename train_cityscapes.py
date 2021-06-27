@@ -55,10 +55,12 @@ class ISSModelWrapper(ModelWrapper):
             stats['valid_pd_mIoU'] = IandU_to_mIoU(stats['valid_pd_I'], stats['valid_pd_U']); stats.pop('valid_pd_I'); stats.pop('valid_pd_U')
             stats['train_sg_mIoU'] = IandU_to_mIoU(stats['train_sg_I'], stats['train_sg_U']); stats.pop('train_sg_I'); stats.pop('train_sg_U')
             stats['valid_sg_mIoU'] = IandU_to_mIoU(stats['valid_sg_I'], stats['valid_sg_U']); stats.pop('valid_sg_I'); stats.pop('valid_sg_U')
+            stats['train_bs_mIoU'] = stats['train_pd_mIoU'] - stats['train_sg_mIoU']
+            stats['valid_bs_mIoU'] = stats['valid_pd_mIoU'] - stats['valid_sg_mIoU']
             if self.console_log:
                 self.logger.info(
                     "[%s] Epoch #%04d Result | train_loss %7.4f | train_mIoU %6.2f%% (%+6.2f%%) | valid_loss %7.4f | valid_mIoU %6.2f%% (%+6.2f%%)"%
-                    (self.model_name,self.epoch,stats['train_loss'],stats['train_pd_mIoU']*100,stats['train_pd_mIoU']*100-stats['train_sg_mIoU']*100,stats['valid_loss'],stats['valid_pd_mIoU']*100,stats['valid_pd_mIoU']*100-stats['valid_sg_mIoU']*100)
+                    (self.model_name,self.epoch,stats['train_loss'],stats['train_pd_mIoU']*100,stats['train_bs_mIoU']*100,stats['valid_loss'],stats['valid_pd_mIoU']*100,stats['valid_bs_mIoU']*100)
                 )
             updated = False
             for key, value in stats.items():
@@ -87,8 +89,11 @@ if __name__=="__main__":
     parser.add_argument('--restart', dest='restart', action='store_const', const=True, default=False, help='clear previous trained model')
     parser.add_argument('--debug', dest='debug', action='store_const', const=True, default=False, help='debug mode: small dataset')
     parser.add_argument('--ddp', dest='ddp', action='store_const', const=True, default=False, help='use distributed data parallel')
+    parser.add_argument('--suggestion', dest='suggestion', type=str, default="20", help='suggestion defined by \'box\', \'click\', or an integer')
+    parser.add_argument('--exp', default="", type=str, help='experiment name')
     parser.add_argument('--ddp_gpu', default="0", type=str, help='gpu indices')
     parser.add_argument('--local_rank', default=0, type=int, help='local rank')
+    # parser.add_argument("--suggestion", dest = 'suggestion', default = True, type = bool, help = "Whether we use generated suggestion")
     args = parser.parse_args()
 
     net = deeplabv3_backbone(
@@ -113,7 +118,7 @@ if __name__=="__main__":
     model = ISSModelWrapper(
         net,
         model_root = "models/",
-        model_name = "DeepLabV3-"+args.model_backbone+"-IIS",
+        model_name = "DeepLabV3-"+args.model_backbone+"-"+args.exp,
         model_version = "fold-%1d"%args.k,
         optimizer = optimizer,
         scheduler = scheduler,
@@ -124,19 +129,22 @@ if __name__=="__main__":
             ('epoch','valid_pd_mIoU','greater'),
             ('epoch','train_sg_mIoU','greater'),
             ('epoch','valid_sg_mIoU','greater'),
+            ('epoch','train_bs_mIoU','greater'),
+            ('epoch','valid_bs_mIoU','greater'),
         ],
         task_criterion = nn.CrossEntropyLoss(),
-        primary = 'valid_pd_mIoU',
+        primary = 'valid_bs_mIoU',
         ddp = args.ddp,
         device = device,
         clear = args.restart,
     )
+    TRANSFORM = CREATE_SUGGEST_TRANSFORM(suggestion = args.suggestion)
     loaders = CityscapesLoaders(
         mode = 'fine',
         transforms = {
-            'train': SUGGEST_TRANSFORM,
-            'valid': SUGGEST_TRANSFORM,
-            'testi': SUGGEST_TRANSFORM,
+            'train': TRANSFORM,
+            'valid': TRANSFORM,
+            'testi': TRANSFORM,
         },
         batch_sizes = {
             'train': 2*(args.ddp_gpu.count(',')+1),
