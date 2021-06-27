@@ -6,7 +6,6 @@ from torchvision.models.segmentation.deeplabv3 import DeepLabHead, DeepLabV3
 from torchvision.models._utils import IntermediateLayerGetter
 from timm import create_model
 
-
 class DeepLabHead(nn.Sequential):
     def __init__(self, in_channels, num_classes):
         super(DeepLabHead, self).__init__(
